@@ -12,17 +12,19 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Hämtar den första prognostiserade temperaturen för Sundsvall från MET Norway. */
+/** Hämtar prognostiserad temperatur från MET Norway. */
 public final class WeatherApi implements AutoCloseable {
-    private static final String FORECAST_URL =
+    private static final String DEFAULT_FORECAST_URL =
             "https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=62.39&lon=17.31";
     // Byt till projektets publika kontaktsida om adressen ändras.
     private static final String USER_AGENT =
             "Java-Weather/1.0 https://github.com/orbeg/Java-Weather";
 
+    private static String cachedUrl;
     private static Double cachedTemperature;
     private static long expiresAt;
     private static long lastModified;
@@ -36,14 +38,19 @@ public final class WeatherApi implements AutoCloseable {
         void onError(Exception error);
     }
 
-    /** Nätverksanropet körs i bakgrunden. Resultatet levereras på UI-tråden. */
+    /** Hämtar väder för standardplatsen (Sundsvall). */
     public void fetchWeather(Callback callback) {
+        fetchWeather(DEFAULT_FORECAST_URL, callback);
+    }
+
+    /** Nätverksanropet körs i bakgrunden med angiven URL. Resultatet levereras på UI-tråden. */
+    public void fetchWeather(String forecastUrl, Callback callback) {
         if (closed) {
             return;
         }
         executor.execute(() -> {
             try {
-                double temperature = fetchTemperature();
+                double temperature = fetchTemperature(forecastUrl);
                 mainHandler.post(() -> {
                     if (!closed) {
                         callback.onSuccess(temperature);
@@ -59,17 +66,17 @@ public final class WeatherApi implements AutoCloseable {
         });
     }
 
-    private static synchronized double fetchTemperature() throws Exception {
-        if (cachedTemperature != null && System.currentTimeMillis() < expiresAt) {
+    private static synchronized double fetchTemperature(String forecastUrl) throws Exception {
+        if (Objects.equals(forecastUrl, cachedUrl) && cachedTemperature != null && System.currentTimeMillis() < expiresAt) {
             return cachedTemperature;
         }
 
-        HttpURLConnection connection = (HttpURLConnection) new URL(FORECAST_URL).openConnection();
+        HttpURLConnection connection = (HttpURLConnection) new URL(forecastUrl).openConnection();
         connection.setRequestProperty("User-Agent", USER_AGENT);
         connection.setRequestProperty("Accept", "application/json");
         connection.setConnectTimeout(15000);
         connection.setReadTimeout(15000);
-        if (cachedTemperature != null && lastModified > 0) {
+        if (Objects.equals(forecastUrl, cachedUrl) && cachedTemperature != null && lastModified > 0) {
             connection.setIfModifiedSince(lastModified);
         }
 
@@ -104,6 +111,7 @@ public final class WeatherApi implements AutoCloseable {
                     .getJSONObject("details")
                     .getDouble("air_temperature");
 
+            cachedUrl = forecastUrl;
             cachedTemperature = temperature;
             expiresAt = connection.getExpiration();
             lastModified = connection.getLastModified();
