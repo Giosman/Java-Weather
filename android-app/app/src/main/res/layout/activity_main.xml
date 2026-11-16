@@ -28,8 +28,8 @@
         android:id="@+id/ivWeatherIcon"
         android:layout_width="140dp"
         android:layout_height="140dp"
-        android:contentDescription="Sun Icon Placeholder"
-        android:src="@drawable/ic_sun_placeholder" />
+        android:contentDescription="Väder hämtas"
+        android:src="@drawable/placeholder" />
 
     <!-- Temperature Text -->
     <TextView

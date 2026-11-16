@@ -25,7 +25,7 @@ public final class WeatherApi implements AutoCloseable {
             "Java-Weather/1.0 https://github.com/orbeg/Java-Weather";
 
     private static String cachedUrl;
-    private static Double cachedTemperature;
+    private static Forecast cachedForecast;
     private static long expiresAt;
     private static long lastModified;
 
@@ -33,8 +33,18 @@ public final class WeatherApi implements AutoCloseable {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private volatile boolean closed;
 
+    public static final class Forecast {
+        public final double temperature;
+        public final String symbolCode;
+
+        private Forecast(double temperature, String symbolCode) {
+            this.temperature = temperature;
+            this.symbolCode = symbolCode;
+        }
+    }
+
     public interface Callback {
-        void onSuccess(double temperature);
+        void onSuccess(Forecast forecast);
         void onError(Exception error);
     }
 
@@ -50,10 +60,10 @@ public final class WeatherApi implements AutoCloseable {
         }
         executor.execute(() -> {
             try {
-                double temperature = fetchTemperature(forecastUrl);
+                Forecast forecast = fetchForecast(forecastUrl);
                 mainHandler.post(() -> {
                     if (!closed) {
-                        callback.onSuccess(temperature);
+                        callback.onSuccess(forecast);
                     }
                 });
             } catch (Exception error) {
@@ -66,9 +76,9 @@ public final class WeatherApi implements AutoCloseable {
         });
     }
 
-    private static synchronized double fetchTemperature(String forecastUrl) throws Exception {
-        if (Objects.equals(forecastUrl, cachedUrl) && cachedTemperature != null && System.currentTimeMillis() < expiresAt) {
-            return cachedTemperature;
+    private static synchronized Forecast fetchForecast(String forecastUrl) throws Exception {
+        if (Objects.equals(forecastUrl, cachedUrl) && cachedForecast != null && System.currentTimeMillis() < expiresAt) {
+            return cachedForecast;
         }
 
         HttpURLConnection connection = (HttpURLConnection) new URL(forecastUrl).openConnection();
@@ -76,15 +86,15 @@ public final class WeatherApi implements AutoCloseable {
         connection.setRequestProperty("Accept", "application/json");
         connection.setConnectTimeout(15000);
         connection.setReadTimeout(15000);
-        if (Objects.equals(forecastUrl, cachedUrl) && cachedTemperature != null && lastModified > 0) {
+        if (Objects.equals(forecastUrl, cachedUrl) && cachedForecast != null && lastModified > 0) {
             connection.setIfModifiedSince(lastModified);
         }
 
         try {
             int status = connection.getResponseCode();
-            if (status == HttpURLConnection.HTTP_NOT_MODIFIED && cachedTemperature != null) {
+            if (status == HttpURLConnection.HTTP_NOT_MODIFIED && cachedForecast != null) {
                 expiresAt = connection.getExpiration();
-                return cachedTemperature;
+                return cachedForecast;
             }
             if (status != HttpURLConnection.HTTP_OK
                     && status != HttpURLConnection.HTTP_NOT_AUTHORITATIVE) {
@@ -105,17 +115,28 @@ public final class WeatherApi implements AutoCloseable {
             if (forecasts.length() == 0) {
                 throw new IOException("Väderprognosen är tom");
             }
-            double temperature = forecasts.getJSONObject(0)
-                    .getJSONObject("data")
-                    .getJSONObject("instant")
+            JSONObject data = forecasts.getJSONObject(0).getJSONObject("data");
+            double temperature = data.getJSONObject("instant")
                     .getJSONObject("details")
                     .getDouble("air_temperature");
 
             cachedUrl = forecastUrl;
-            cachedTemperature = temperature;
+            String symbolCode = "";
+            for (String period : new String[]{"next_1_hours", "next_6_hours", "next_12_hours"}) {
+                JSONObject interval = data.optJSONObject(period);
+                JSONObject summary = interval == null ? null : interval.optJSONObject("summary");
+                if (summary != null) {
+                    symbolCode = summary.optString("symbol_code", "");
+                    if (!symbolCode.isEmpty()) {
+                        break;
+                    }
+                }
+            }
+            Forecast forecast = new Forecast(temperature, symbolCode);
+            cachedForecast = forecast;
             expiresAt = connection.getExpiration();
             lastModified = connection.getLastModified();
-            return temperature;
+            return forecast;
         } finally {
             connection.disconnect();
         }
