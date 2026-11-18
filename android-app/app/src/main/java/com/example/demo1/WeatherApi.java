@@ -143,7 +143,8 @@ public final class WeatherApi implements AutoCloseable {
     }
 
     @Override
-    public void close() {
+    public void close()
+    {
         closed = true;
         executor.shutdownNow();
         mainHandler.removeCallbacksAndMessages(null);
